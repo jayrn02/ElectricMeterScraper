@@ -19,20 +19,6 @@ This project contains a Python script (`scraper.py`) that uses Selenium to log i
 3.  **WebDriver:**
     *   Download the ChromeDriver that matches your version of Google Chrome from [https://chromedriver.chromium.org/downloads](https://chromedriver.chromium.org/downloads).
     *   Place `chromedriver.exe` in the same directory as `scraper.py`, or ensure it's in your system's PATH.
-4.  **Set Up Credentials:**
-    *   In the project directory, you will find a file named `credentials.template.json`.
-    *   **Rename this file to `credentials.json`** (i.e., remove the `.template` part from the filename).
-    *   Open `credentials.json` with a text editor.
-    *   Replace `"YOUR_IC_NUMBER_HERE"` with your actual IC number.
-    *   Replace `"YOUR_PASSWORD_HERE"` with your actual password.
-    *   Save the `credentials.json` file. The file should look like this after editing:
-        ```json
-        {
-          "username": "01127182",
-          "password": "YourActualPassword"
-        }
-        ```
-        **(Note: `credentials.json` is listed in `.gitignore` and will not be committed to version control.)**
 
 ## Running the Scraper
 
