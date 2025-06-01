@@ -11,4 +11,35 @@ This project contains a Python script (`scraper.py`) that uses Selenium to log i
 
 ## Setup
 
-(Instructions to be added for setting environment variables and running the script)
+1.  **Install Python:** If you don't have Python installed, download and install it from [python.org](https://www.python.org/).
+2.  **Install Selenium:** Open your terminal or command prompt and install the Selenium library:
+    ```bash
+    pip install selenium
+    ```
+3.  **WebDriver:**
+    *   Download the ChromeDriver that matches your version of Google Chrome from [https://chromedriver.chromium.org/downloads](https://chromedriver.chromium.org/downloads).
+    *   Place `chromedriver.exe` in the same directory as `scraper.py`, or ensure it's in your system's PATH.
+4.  **Set Up Credentials:**
+    *   In the project directory, you will find a file named `credentials.template.json`.
+    *   **Rename this file to `credentials.json`** (i.e., remove the `.template` part from the filename).
+    *   Open `credentials.json` with a text editor.
+    *   Replace `"YOUR_IC_NUMBER_HERE"` with your actual IC number.
+    *   Replace `"YOUR_PASSWORD_HERE"` with your actual password.
+    *   Save the `credentials.json` file. The file should look like this after editing:
+        ```json
+        {
+          "username": "01127182",
+          "password": "YourActualPassword"
+        }
+        ```
+        **(Note: `credentials.json` is listed in `.gitignore` and will not be committed to version control.)**
+
+## Running the Scraper
+
+1.  Open your terminal or command prompt.
+2.  Navigate to the project directory (`ElectricMeterScraper`).
+3.  Run the script:
+    ```bash
+    python scraper.py
+    ```
+    The script will open a Chrome browser window, log in, navigate, and print the scraped data to the console.
