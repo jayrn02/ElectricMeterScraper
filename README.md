@@ -22,10 +22,4 @@ This project contains a Python script (`scraper.py`) that uses Selenium to log i
 
 ## Running the Scraper
 
-1.  Open your terminal or command prompt.
-2.  Navigate to the project directory (`ElectricMeterScraper`).
-3.  Run the script:
-    ```bash
-    python scraper.py
-    ```
-    The script will open a Chrome browser window, log in, navigate, and print the scraped data to the console.
+...
