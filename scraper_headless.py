@@ -4,6 +4,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
 import time
 import json # Added for loading credentials
 
@@ -97,9 +98,14 @@ username_field_name = "ASPxRoundPanel1$txtUsername"
 password_field_name = "ASPxRoundPanel1$txtPassword"
 login_button_name = "ASPxRoundPanel1$btnLogin" # This was in the form data
 
-# Initialize the WebDriver (using Chrome in this example)
-# driver = webdriver.Chrome(executable_path=webdriver_path) # Use this if webdriver_path is set
-driver = webdriver.Chrome() 
+# Initialize the WebDriver with headless mode
+chrome_options = Options()
+chrome_options.add_argument("--headless")
+chrome_options.add_argument("--window-size=1456,1020")
+
+# Use the headless Chrome driver
+# driver = webdriver.Chrome(executable_path=webdriver_path, options=chrome_options) # Use this if webdriver_path is set
+driver = webdriver.Chrome(options=chrome_options)
 driver.set_window_size(1456, 1020) 
 
 print(f"Navigating to login page: {login_url}")

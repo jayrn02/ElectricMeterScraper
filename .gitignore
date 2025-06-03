@@ -20,7 +20,7 @@ venv.bak/
 *.sln
 *.sublime-workspace
 
-# Secrets - Important!
+# Secrets
 credentials.json
 config.ini
 *.env
