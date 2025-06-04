@@ -3,16 +3,17 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.common.keys import Keys
-import time
 import json # Added for loading credentials
+import time
+import pandas as pd # Added for Excel export
 
 # Function to load credentials from a JSON file
 def load_credentials(file_path="credentials.json"):
     try:
         with open(file_path, 'r') as f:
             creds = json.load(f)
-            return creds["username"], creds["password"]
+            # Return username and password from creds
+            return creds.get("username"), creds.get("password")
     except FileNotFoundError:
         print(f"Error: Credentials file '{file_path}' not found.")
         return None, None
@@ -24,10 +25,6 @@ def load_credentials(file_path="credentials.json"):
         return None, None
 
 def scrape_data_from_table(driver):
-    """
-    Scrapes hourly and total consumption data from the table.
-    Assumes the driver is on the page containing the table.
-    """
     hourly_data = []
     total_consumption = None
 
@@ -78,6 +75,44 @@ def scrape_data_from_table(driver):
 
     return hourly_data, total_consumption
 
+def scrape_dynamic_values(driver):
+    """
+    Scrapes specific labeled values (Remaining Unit, Remaining Balance, Last Updated) from the page.
+    """
+    values = {}
+    try:
+        # Switch to the iframe 'MyFrame' using its ID
+        WebDriverWait(driver, 10).until(EC.frame_to_be_available_and_switch_to_it((By.ID, "MyFrame")))
+        print("Switched to iframe 'MyFrame'.")
+
+        # Define the labels and their corresponding XPath for the values
+        labels_xpaths = {
+            "Remaining Unit": "//*[@id='ASPxCardView1_DXCardLayout0_11']/table/tbody/tr/td[2]",
+            "Remaining Balance": "//*[@id='ASPxCardView1_DXCardLayout0_12']/table/tbody/tr/td[2]",
+            "Last Updated": "//*[@id='ASPxCardView1_DXCardLayout0_17']/table/tbody/tr/td[2]"
+        }
+
+        for label, xpath in labels_xpaths.items():
+            try:
+                # Wait for the element to be present
+                element = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, xpath))
+                )
+                values[label] = element.text
+                print(f"{label}: {element.text}")
+            except TimeoutException:
+                print(f"Error: Timed out waiting for {label} to load.")
+                values[label] = None
+
+        # Switch back to the default content after scraping
+        driver.switch_to.default_content()
+        print("Switched back to default content.")
+
+    except Exception as e:
+        print(f"Error scraping dynamic values: {e}")
+
+    return values
+
 # --- Configuration ---
 login_url = "https://www.usms.com.bn/SmartMeter/resLogin"
 
@@ -107,7 +142,7 @@ driver.get(login_url)
 
 try:
     # Wait for the username field to be present and visible
-    print("Waiting for username field (ID: ASPxRoundPanel1_txtUsername_I) to be clickable...")
+    print("Waiting for username field (ID: ASPxRoundPanel1_txtUsername_I)...")
     username_input = WebDriverWait(driver, 20).until(
         EC.element_to_be_clickable((By.ID, "ASPxRoundPanel1_txtUsername_I"))
     )
@@ -116,15 +151,8 @@ try:
     username_input.send_keys(username)
     print("Username entered.")
 
-    # Click to focus or dismiss pop-up after username, from test_meter3.py
-    print("Clicking table cell (CSS: tr:nth-child(5) > td)...")
-    WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.CSS_SELECTOR, "tr:nth-child(5) > td"))
-    ).click()
-    print("Table cell clicked.")
-
     # Find and fill the password field
-    print("Waiting for password field (ID: ASPxRoundPanel1_txtPassword_I) to be clickable...")
+    print("Waiting for password field (ID: ASPxRoundPanel1_txtPassword_I)...")
     password_input = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.ID, "ASPxRoundPanel1_txtPassword_I"))
     )
@@ -134,13 +162,14 @@ try:
     print("Password entered.")
 
     # Find and click the login button
-    print("Waiting for login button (CSS: #ASPxRoundPanel1_btnLogin_CD > .dx-vam) to be clickable...")
+    print("Waiting for login button (ID: ASPxRoundPanel1_btnLogin_CD)...")
     login_button = WebDriverWait(driver, 20).until(
-        EC.element_to_be_clickable((By.CSS_SELECTOR, "#ASPxRoundPanel1_btnLogin_CD > .dx-vam"))
+        EC.element_to_be_clickable((By.ID, "ASPxRoundPanel1_btnLogin_CD"))
     )
     print("Login button is clickable. Attempting to click...")
-    driver.execute_script("arguments[0].scrollIntoView({behavior: 'auto', block: 'center', inline: 'center'});", login_button)
-    time.sleep(0.5)
+    # Optional: Scroll into view if needed, though WebDriverWait usually handles visibility.
+    # driver.execute_script("arguments[0].scrollIntoView({behavior: 'auto', block: 'center', inline: 'center'});", login_button)
+    # time.sleep(0.5) # Small pause before click, can be helpful
     login_button.click()
     print("Login button clicked.")
 
@@ -153,15 +182,23 @@ try:
     if "reslogin" not in current_url.lower():
         print("Login successful! URL has changed.")
         print(f"Now on page: {driver.current_url}")
-        
+
+
+    
         print("Allowing MainPage to settle for 3 seconds...")
         time.sleep(3)
 
         try:
+            dynamic_values = scrape_dynamic_values(driver)
+            if dynamic_values:
+                print(f"Dynamic Values: {dynamic_values}")
+            else:
+                print("Failed to retrieve dynamic values.")
+
             print("Switching to iframe (index 0)...")
             WebDriverWait(driver, 20).until(EC.frame_to_be_available_and_switch_to_it(0))
             print("Switched to iframe.")
-            time.sleep(1)
+            time.sleep(1) # Allow frame content to load
 
             print("Waiting for consumption image link (CSS: #ASPxCardView1_DXCardLayout0_cell0_18_ASPxHyperLink4_0 > img)...")
             consumption_link_img = WebDriverWait(driver, 30).until(
@@ -170,125 +207,79 @@ try:
             print("Consumption image link found. Clicking...")
             consumption_link_img.click()
             print("Consumption image link clicked.")
-            time.sleep(3)
+            time.sleep(2) # Allow page to react
 
-            print("Waiting for 'Type' dropdown (ID: cboType_I)...")
-            type_dropdown = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.ID, "cboType_I")))
-            type_dropdown.click()
-            print("'Type' dropdown clicked.")
-            time.sleep(1)
+            print("Waiting for 'Type' dropdown trigger (ID: cboType_B-1Img)...")
+            type_dropdown_trigger = WebDriverWait(driver, 20).until(
+                EC.element_to_be_clickable((By.ID, "cboType_B-1Img"))
+            )
+            type_dropdown_trigger.click()
+            print("'Type' dropdown trigger clicked.")
+            time.sleep(1) # Allow dropdown to appear
 
             print("Waiting for 'Type' option (ID: cboType_DDD_L_LBI3T0)...")
-            type_option = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "cboType_DDD_L_LBI3T0")))
+            type_option = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "cboType_DDD_L_LBI3T0"))
+            )
             type_option.click()
             print("'Type' option selected.")
-            time.sleep(1)
+            time.sleep(1) # Allow selection to process
 
-            print("Interacting with 'Date From' (ID: cboDateFrom_I)...")
-            date_from_input = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "cboDateFrom_I")))
-            date_from_input.click()
-            time.sleep(0.5)
-            date_from_input.click()
-            time.sleep(0.5)
-            
-            print("Clicking to close calendar/focus (CSS: #UpdatePanel1 > div > table > tbody > tr:nth-child(3))...")
-            WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "#UpdatePanel1 > div > table > tbody > tr:nth-child(3)"))
-            ).click()
-            time.sleep(0.5)
-
-            print("Sending keys '29-5-25' to 'Date From'...")
-            date_from_input.clear()
-            date_from_input.send_keys("29-5-25")
-            print("'Date From' set.")
-            time.sleep(1)
-
-            # Interact with "Date To"
-            print("Interacting with 'Date To' (ID: cboDateTo_I)...")
-            
-            # Explicitly wait for the known overlay to be gone before interacting with date input
-            overlay_id = "pcErr_DXPWMB-1"
-            print(f"Checking for overlay {overlay_id} and waiting for it to be invisible...")
-            try:
-                WebDriverWait(driver, 15).until( # Increased wait time slightly
-                    EC.invisibility_of_element_located((By.ID, overlay_id))
-                )
-                print(f"Overlay {overlay_id} is invisible or gone.")
-            except TimeoutException:
-                print(f"Overlay {overlay_id} did not disappear. Attempting to send ESCAPE key...")
-                try:
-                    driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
-                    print("Sent ESCAPE key.")
-                    time.sleep(1) # Give it a moment to react
-                except Exception as esc_e:
-                    print(f"Could not send ESCAPE key: {esc_e}")
-
-            # Now, attempt to click the date input field
-            date_to_input = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "cboDateTo_I")))
-            print("Attempting to click 'Date To' input field...")
-            try:
-                date_to_input.click()
-                print("'Date To' input field clicked normally.")
-            except Exception as e:
-                print(f"Normal click on 'Date To' failed: {type(e).__name__} - {e}. Attempting JavaScript click.")
-                driver.execute_script("arguments[0].click();", date_to_input)
-                print("'Date To' input field clicked using JavaScript.")
-            time.sleep(0.5)
-
-            print("Clicking related to date picker (CSS: tr:nth-child(3) > td > table > tbody > tr)...")
-            WebDriverWait(driver, 10).until(
-                 EC.element_to_be_clickable((By.CSS_SELECTOR, "tr:nth-child(3) > td > table > tbody > tr"))
-            ).click()
-            print("Clicked element related to date picker.")
-            time.sleep(0.5)
-
-            # Re-fetch element before send_keys for robustness
-            print("Re-fetching 'Date To' input element before sending keys...")
-            date_to_input = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cboDateTo_I")))
-            print("Sending keys '29-5-25' to 'Date To'...")
-            date_to_input.clear()
-            date_to_input.send_keys("29-5-25")
-            print("'Date To' set.")
-            time.sleep(1)
-
-            print("Waiting for 'Refresh' button (CSS: #btnRefresh_CD > .dx-vam)...")
+            print("Waiting for refresh button (CSS: #btnRefresh_CD > .dx-vam)...")
             refresh_button = WebDriverWait(driver, 20).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "#btnRefresh_CD > .dx-vam"))
             )
             refresh_button.click()
-            print("'Refresh' button clicked.")
-            time.sleep(5)
+            print("Refresh button clicked.")
+            time.sleep(3) # Allow data to refresh
 
-            print("Waiting for 'Hourly Consumption' tab (CSS: #ASPxPageControl1_T1T > .dx-vam)...")
-            hourly_tab = WebDriverWait(driver, 20).until(
+            print("Waiting for data tab/view (CSS: #ASPxPageControl1_T1T > .dx-vam)...")
+            data_tab = WebDriverWait(driver, 20).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "#ASPxPageControl1_T1T > .dx-vam"))
             )
-            hourly_tab.click()
-            print("'Hourly Consumption' tab clicked.")
-            time.sleep(5)
+            data_tab.click()
+            print("Data tab/view clicked.")
+            time.sleep(2) # Allow tab content to load
 
-            print(f"Current URL after navigation: {driver.current_url}")
-            print(f"Page title after navigation: {driver.title}")
+            # At this point, the page with the data table should be loaded.
+            # Now, attempt to scrape data from the table.
+            print("Attempting to scrape data from table...")
+            hourly_consumption, total_kwh = scrape_data_from_table(driver)
 
-            print("Attempting to scrape data from the table...")
-            hourly_data, total_kwh = scrape_data_from_table(driver)
-
-            if hourly_data:
-                print("\nHourly Consumption Data:")
-                for item in hourly_data:
+            if hourly_consumption:
+                print("\nHourly Consumption:")
+                for item in hourly_consumption:
                     print(f"  Hour: {item['hour']}, kWh: {item['consumption_kWh']}")
-            else:
-                print("\nNo hourly consumption data found or scraped.")
-
+            
             if total_kwh:
                 print(f"\nTotal Consumption: {total_kwh} kWh")
             else:
                 print("\nCould not retrieve total consumption.")
-            
+
+            # --- Save to Excel ---
+            if hourly_consumption:
+                try:
+                    df = pd.DataFrame(hourly_consumption)
+                    # For now, we'll just save hourly data. We can add total_kwh later.
+                    excel_file_path = r"C:\Users\jayre\Desktop\MeterData.xlsx"
+                    df.to_excel(excel_file_path, index=False, sheet_name="Hourly Consumption")
+                    print(f"\nData successfully saved to {excel_file_path}")
+                except Exception as e:
+                    print(f"\nError saving data to Excel: {e}")
+            else:
+                print("\nNo hourly data to save to Excel.")
+            # --- End Save to Excel ---
+
+            # Call scrape_dynamic_value after navigation and actions
+
+
+            # Switch back to default content if you need to interact outside the iframe later
+            # driver.switch_to.default_content()
+
         except TimeoutException as nav_te:
-            print(f"Timeout during post-login navigation: {nav_te}")
+            print(f"A timeout occurred during navigation or interaction after login: {nav_te}")
         except Exception as nav_e:
-            print(f"An error occurred during post-login navigation or scraping: {nav_e}")
+            print(f"An error occurred after login: {nav_e}")
         # ==============================================================================
 
     elif "Invalid IC Number or Password" in driver.page_source:
@@ -309,60 +300,3 @@ except Exception as e:
 finally:
     print("Closing the browser.")
     driver.quit()
-
-# Example of how you might call this function after successful login and navigation:
-# if __name__ == "__main__":
-#     # ... (your existing login and navigation code) ...
-#     # driver = ... (your initialized and navigated WebDriver)
-#
-#     # Assuming login and navigation were successful and driver is on the correct page
-#     # For demonstration, let's simulate the driver being on the page
-#     # In a real scenario, this would be after your login and navigation steps
-#
-#     # ---- Placeholder for your actual driver initialization and navigation ----
-#     # from selenium import webdriver
-#     # from selenium.webdriver.chrome.service import Service as ChromeService
-#     # from webdriver_manager.chrome import ChromeDriverManager
-#     #
-#     # options = webdriver.ChromeOptions()
-#     # # options.add_argument('--headless') # Optional: run headless
-#     # options.add_argument('--disable-gpu') # Optional: recommended for headless
-#     # options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36")
-#     #
-#     # print("Initializing WebDriver...")
-#     # driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
-#     # print("WebDriver initialized.")
-#     #
-#     # # --- IMPORTANT: Replace this with actual navigation to the data page ---
-#     # # driver.get("your_data_page_url_here_after_login")
-#     # # For this example, we can't actually log in, so this part is illustrative.
-#     # # You would call scrape_data_from_table(driver) AFTER you are on the page
-#     # # that contains the HTML snippet you provided.
-#     #
-#     # # If you have the HTML content locally for testing this function, you could load it:
-#     # # import os
-#     # # current_dir = os.path.dirname(os.path.abspath(__file__))
-#     # # html_file_path = os.path.join(current_dir, "temp_data_page.html") # Save your HTML snippet to this file
-#     # # with open(html_file_path, "w", encoding="utf-8") as f:
-#     # #     f.write(\'\'\'YOUR_HTML_SNIPPET_HERE\'\'\') # Paste the long HTML here
-#     # # driver.get("file://" + html_file_path)
-#     # # time.sleep(2) # Allow page to load
-#     # # --------------------------------------------------------------------
-#
-#     # hourly_consumption, total_kwh = scrape_data_from_table(driver)
-#
-#     # if hourly_consumption:
-#     #     print("\\nHourly Consumption:")
-#     #     for item in hourly_consumption:
-#     #         print(f"  Hour: {item['hour']}, kWh: {item['consumption_kWh']}")
-#
-#     # if total_kwh:
-#     #     print(f"\\nTotal Consumption: {total_kwh} kWh")
-#     # else:
-#     #     print("\\nCould not retrieve total consumption.")
-#
-#     # driver.quit() # Make sure to quit the driver when done
-
-# The main part of the script (login, etc.) would go above or call this function.
-# For now, this function is defined and can be called once the driver is on the correct page.
-
