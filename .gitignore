@@ -25,3 +25,4 @@ credentials.json
 config.ini
 *.env
 secrets.py
+ignore/
