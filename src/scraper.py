@@ -8,20 +8,38 @@ import time
 import pandas as pd # Added for Excel export
 
 # Function to load credentials from a JSON file
-def load_credentials(file_path="credentials.json"):
+def load_credentials(file_path=None, service="USMS"):
+    if file_path is None:
+        # Get the directory where this script is located
+        import os
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(script_dir, "credentials.json")
     try:
         with open(file_path, 'r') as f:
             creds = json.load(f)
-            # Return username and password from creds
-            return creds.get("username"), creds.get("password")
+            # Check if the service exists in the credentials
+            if service not in creds:
+                print(f"Error: Service '{service}' not found in '{file_path}'.")
+                return None, None
+            
+            service_creds = creds[service]
+            # Return username and password for USMS, or serviceNumber and accountNumber for other services
+            if service == "USMS":
+                return service_creds.get("username"), service_creds.get("password")
+            elif service == "Imagine":
+                return service_creds.get("serviceNumber"), service_creds.get("accountNumber")
+            else:
+                # For future services, you can add more conditions here
+                print(f"Error: Unknown service '{service}'.")
+                return None, None
     except FileNotFoundError:
         print(f"Error: Credentials file '{file_path}' not found.")
         return None, None
     except json.JSONDecodeError:
         print(f"Error: Could not decode JSON from '{file_path}'.")
         return None, None
-    except KeyError:
-        print(f"Error: 'username' or 'password' key not found in '{file_path}'.")
+    except KeyError as e:
+        print(f"Error: Required key not found in '{file_path}': {e}")
         return None, None
 
 def scrape_data_from_table(driver):
@@ -117,7 +135,7 @@ def scrape_dynamic_values(driver):
 login_url = "https://www.usms.com.bn/SmartMeter/resLogin"
 
 # Load credentials from file
-username, password = load_credentials() # Loads from credentials.json by default
+username, password = load_credentials() # Loads USMS credentials from credentials.json by default
 
 if not username or not password:
     print("Exiting script due to credential loading issues.")

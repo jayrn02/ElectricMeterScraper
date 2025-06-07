@@ -9,19 +9,38 @@ import time
 import json # Added for loading credentials
 
 # Function to load credentials from a JSON file
-def load_credentials(file_path="credentials.json"):
+def load_credentials(file_path=None, service="USMS"):
+    if file_path is None:
+        # Get the directory where this script is located
+        import os
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(script_dir, "credentials.json")
     try:
         with open(file_path, 'r') as f:
             creds = json.load(f)
-            return creds["username"], creds["password"]
+            # Check if the service exists in the credentials
+            if service not in creds:
+                print(f"Error: Service '{service}' not found in '{file_path}'.")
+                return None, None
+            
+            service_creds = creds[service]
+            # Return username and password for USMS, or serviceNumber and accountNumber for other services
+            if service == "USMS":
+                return service_creds.get("username"), service_creds.get("password")
+            elif service == "Imagine":
+                return service_creds.get("serviceNumber"), service_creds.get("accountNumber")
+            else:
+                # For future services, you can add more conditions here
+                print(f"Error: Unknown service '{service}'.")
+                return None, None
     except FileNotFoundError:
         print(f"Error: Credentials file '{file_path}' not found.")
         return None, None
     except json.JSONDecodeError:
         print(f"Error: Could not decode JSON from '{file_path}'.")
         return None, None
-    except KeyError:
-        print(f"Error: 'username' or 'password' key not found in '{file_path}'.")
+    except KeyError as e:
+        print(f"Error: Required key not found in '{file_path}': {e}")
         return None, None
 
 def scrape_data_from_table(driver):
@@ -83,7 +102,7 @@ def scrape_data_from_table(driver):
 login_url = "https://www.usms.com.bn/SmartMeter/resLogin"
 
 # Load credentials from file
-username, password = load_credentials() # Loads from credentials.json by default
+username, password = load_credentials() # Loads USMS credentials from credentials.json by default
 
 if not username or not password:
     print("Exiting script due to credential loading issues.")
@@ -315,60 +334,3 @@ except Exception as e:
 finally:
     print("Closing the browser.")
     driver.quit()
-
-# Example of how you might call this function after successful login and navigation:
-# if __name__ == "__main__":
-#     # ... (your existing login and navigation code) ...
-#     # driver = ... (your initialized and navigated WebDriver)
-#
-#     # Assuming login and navigation were successful and driver is on the correct page
-#     # For demonstration, let's simulate the driver being on the page
-#     # In a real scenario, this would be after your login and navigation steps
-#
-#     # ---- Placeholder for your actual driver initialization and navigation ----
-#     # from selenium import webdriver
-#     # from selenium.webdriver.chrome.service import Service as ChromeService
-#     # from webdriver_manager.chrome import ChromeDriverManager
-#     #
-#     # options = webdriver.ChromeOptions()
-#     # # options.add_argument('--headless') # Optional: run headless
-#     # options.add_argument('--disable-gpu') # Optional: recommended for headless
-#     # options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36")
-#     #
-#     # print("Initializing WebDriver...")
-#     # driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
-#     # print("WebDriver initialized.")
-#     #
-#     # # --- IMPORTANT: Replace this with actual navigation to the data page ---
-#     # # driver.get("your_data_page_url_here_after_login")
-#     # # For this example, we can't actually log in, so this part is illustrative.
-#     # # You would call scrape_data_from_table(driver) AFTER you are on the page
-#     # # that contains the HTML snippet you provided.
-#     #
-#     # # If you have the HTML content locally for testing this function, you could load it:
-#     # # import os
-#     # # current_dir = os.path.dirname(os.path.abspath(__file__))
-#     # # html_file_path = os.path.join(current_dir, "temp_data_page.html") # Save your HTML snippet to this file
-#     # # with open(html_file_path, "w", encoding="utf-8") as f:
-#     # #     f.write(\'\'\'YOUR_HTML_SNIPPET_HERE\'\'\') # Paste the long HTML here
-#     # # driver.get("file://" + html_file_path)
-#     # # time.sleep(2) # Allow page to load
-#     # # --------------------------------------------------------------------
-#
-#     # hourly_consumption, total_kwh = scrape_data_from_table(driver)
-#
-#     # if hourly_consumption:
-#     #     print("\\nHourly Consumption:")
-#     #     for item in hourly_consumption:
-#     #         print(f"  Hour: {item['hour']}, kWh: {item['consumption_kWh']}")
-#
-#     # if total_kwh:
-#     #     print(f"\\nTotal Consumption: {total_kwh} kWh")
-#     # else:
-#     #     print("\\nCould not retrieve total consumption.")
-#
-#     # driver.quit() # Make sure to quit the driver when done
-
-# The main part of the script (login, etc.) would go above or call this function.
-# For now, this function is defined and can be called once the driver is on the correct page.
-
