@@ -26,3 +26,9 @@ config.ini
 *.env
 secrets.py
 ignore/
+
+# Generated Excel files
+*.xlsx
+**/ImagineUsageData_*.xlsx
+**/MeterData_*.xlsx
+**/test_data_*.xlsx

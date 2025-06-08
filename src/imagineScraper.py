@@ -1,4 +1,7 @@
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -6,10 +9,11 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 import json
 import time
-import pandas as pd
 import os
+from mqtt_publisher import publish_imagine_json
+from datetime import datetime, timezone, timedelta
+from excel_exporter import export_imagine_data
 
-# Function to load credentials from a JSON file
 def load_credentials(file_path=None, service="Imagine"):
     if file_path is None:
         # Get the directory where this script is located
@@ -41,10 +45,6 @@ def load_credentials(file_path=None, service="Imagine"):
         return None, None
 
 def scrape_usage_data(driver):
-    """
-    Scrapes usage data from the Imagine website after successful form submission.
-    Specifically targets the data usage information in the progress bars.
-    """
     usage_data = {}
     
     try:
@@ -128,19 +128,77 @@ def scrape_usage_data(driver):
     
     return usage_data
 
-def main():
-    # --- Configuration ---
-    usage_url = "https://app.imagine.com.bn/online_topup/usage.php"
+def setup_driver():
+    """Initializes and returns a Chrome WebDriver instance."""
+    options = Options()
+    chrome_exe_paths_to_try = [
+        r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        r"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+        rf"C:\\Users\\{os.getlogin()}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe"
+    ]
+    found_chrome_binary = False
+    for path_option in chrome_exe_paths_to_try:
+        if os.path.exists(path_option):
+            options.binary_location = path_option
+            print(f"Using Chrome binary location: {path_option}")
+            found_chrome_binary = True
+            break
+    if not found_chrome_binary:
+        print("WARNING: Chrome binary not found at common locations. Selenium will try to locate it automatically.")
+        print(f"Looked in: {chrome_exe_paths_to_try}")
+
+    try:
+        raw_driver_path = ChromeDriverManager().install()
+        print(f"Raw ChromeDriver Path from WDM: {raw_driver_path}")
+    except Exception as e:
+        print(f"Error calling ChromeDriverManager().install(): {e}")
+        print("Please ensure webdriver-manager is installed and can access the internet.")
+        return None
+
+    normalized_driver_path = os.path.normpath(raw_driver_path)
     
-    # Load credentials from file
+    potential_path1 = os.path.join(os.path.dirname(normalized_driver_path), "chromedriver.exe")
+    potential_path2 = os.path.join(os.path.dirname(os.path.dirname(normalized_driver_path)), "chromedriver.exe")
+
+    corrected_driver_path = None
+    if os.path.exists(potential_path1):
+        corrected_driver_path = potential_path1
+        print(f"Found ChromeDriver at: {corrected_driver_path}")
+    elif os.path.exists(potential_path2):
+        corrected_driver_path = potential_path2
+        print(f"Found ChromeDriver at: {corrected_driver_path}")
+    else:
+        print(f"Initial path from WDM: {normalized_driver_path}")
+        print(f"Checked for ChromeDriver at: {potential_path1}")
+        print(f"Checked for ChromeDriver at: {potential_path2}")
+        print("ERROR: ChromeDriver executable not found at expected locations within .wdm cache.")
+        print("Please check the .wdm cache structure or webdriver-manager installation.")
+        return None
+
+    print(f"Using final ChromeDriver Path: {corrected_driver_path}")
+    
+    try:
+        driver_service = Service(executable_path=corrected_driver_path)
+        driver = webdriver.Chrome(service=driver_service, options=options)
+        return driver
+    except Exception as e:
+        print(f"Error initializing webdriver.Chrome with path {corrected_driver_path}: {e}")
+        return None
+
+def main():
+    usage_url = "https://app.imagine.com.bn/online_topup/usage.php"
     service_number, account_number = load_credentials()
     
     if not service_number or not account_number:
         print("Exiting script due to credential loading issues.")
         return
     
-    # Initialize the WebDriver (using Chrome)
-    driver = webdriver.Chrome()
+    # --- WebDriver Setup ---
+    driver = setup_driver()
+    if not driver:
+        print("Failed to setup WebDriver. Exiting.")
+        return
+
     driver.set_window_size(2576, 1396)
     
     print(f"Navigating to usage page: {usage_url}")
@@ -209,40 +267,48 @@ def main():
                 for key, value in usage_data.items():
                     print(f"  {key}: {value}")
                 
-                # Save to Excel with timestamp
-                try:
-                    from datetime import datetime
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    
-                    # Convert usage_data to a DataFrame
-                    df = pd.DataFrame([usage_data])
-                    excel_file_path = rf"C:\Users\jayre\Desktop\ImagineUsageData_{timestamp}.xlsx"
-                    
-                    # Create a more detailed Excel file
-                    with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False, sheet_name="Usage Summary")
+                # Prepare data for MQTT in the desired format
+                mqtt_payload = {}
+                if "Base Plan Usage" in usage_data:
+                    try:
+                        usage_string = usage_data["Base Plan Usage"] # e.g., "139GB of 700 GB Used"
+                        parts = usage_string.lower().split('of')
+                        used_part = parts[0].replace('gb', '').strip()
+                        total_part = parts[1].split('gb')[0].strip()
                         
-                        # Create a detailed breakdown sheet if we have the specific data
-                        if "Base Plan Usage" in usage_data or "Topup Usage" in usage_data:
-                            breakdown_data = []
-                            if "Base Plan Usage" in usage_data:
-                                breakdown_data.append({
-                                    "Plan Type": "Base Plan",
-                                    "Usage Info": usage_data["Base Plan Usage"],
-                                    "Total Allowance": usage_data.get("Base Plan Total", "N/A")
-                                })
-                            if "Topup Usage" in usage_data:
-                                breakdown_data.append({
-                                    "Plan Type": "Topup",
-                                    "Usage Info": usage_data["Topup Usage"], 
-                                    "Total Allowance": usage_data.get("Topup Total", "N/A"),
-                                    "Expiry": usage_data.get("Topup Expiry", "N/A")
-                                })
-                            
-                            breakdown_df = pd.DataFrame(breakdown_data)
-                            breakdown_df.to_excel(writer, index=False, sheet_name="Usage Breakdown")
-                    
-                    print(f"\nData successfully saved to {excel_file_path}")
+                        mqtt_payload['base_plan_used_gb'] = int(used_part) # Key reverted to 'base_plan_used_gb'
+                        mqtt_payload['base_plan_total_gb'] = int(total_part) # Key reverted to 'base_plan_total_gb'
+                        
+                    except Exception as e:
+                        print(f"Could not parse 'Base Plan Usage' string: '{usage_data['Base Plan Usage']}'. Error: {e}")
+                        # mqtt_payload will remain empty or without these keys, so publishing will be skipped
+
+                if 'base_plan_used_gb' in mqtt_payload and 'base_plan_total_gb' in mqtt_payload: # Condition reverted to use _gb keys
+                    # Get current UTC time
+                    utc_now = datetime.now(timezone.utc)
+                    # Define Brunei timezone (UTC+8)
+                    brunei_tz = timezone(timedelta(hours=8))
+                    # Convert UTC time to Brunei time
+                    brunei_now = utc_now.astimezone(brunei_tz)
+                    # Format time string and append fixed offset
+                    mqtt_payload['mqtt_timestamp'] = brunei_now.isoformat()
+                    print(f"\\nPrepared MQTT payload: {mqtt_payload}")
+                    print("Attempting to publish data via MQTT...")
+                    try:
+                        if publish_imagine_json(mqtt_payload):
+                            print("✅ Imagine data published successfully via MQTT.")
+                        else:
+                            print("❌ Failed to publish Imagine data via MQTT. Check mqtt_publisher logs for details.")
+                    except Exception as e:
+                        print(f"❌ An error occurred during MQTT publishing: {e}")
+                else:
+                    print("\\nSkipping MQTT publish: Could not prepare 'base_plan_used_gb' and 'base_plan_total_gb' from scraped content.")                # Save to Excel using the exporter module
+                try:
+                    excel_path = export_imagine_data(usage_data)
+                    if excel_path:
+                        print(f"\nData successfully saved to {excel_path}")
+                    else:
+                        print("\nFailed to save data to Excel.")
                 except Exception as e:
                     print(f"\nError saving data to Excel: {e}")
             else:

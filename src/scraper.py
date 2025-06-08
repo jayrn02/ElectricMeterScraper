@@ -5,7 +5,14 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 import json # Added for loading credentials
 import time
-import pandas as pd # Added for Excel export
+from mqtt_publisher import publish_usms_json # Added for MQTT publishing
+import os # Added
+from datetime import datetime, timezone, timedelta # Added timezone, timedelta
+from excel_exporter import export_usms_data
+
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options # Added
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Function to load credentials from a JSON file
 def load_credentials(file_path=None, service="USMS"):
@@ -100,6 +107,14 @@ def scrape_dynamic_values(driver):
     values = {}
     try:
         # Switch to the iframe 'MyFrame' using its ID
+        # Check if already in an iframe, and if so, switch to default content first
+        # This is a guess, might need adjustment based on actual iframe structure
+        try:
+            driver.switch_to.default_content()
+            print("Switched to default content before attempting to switch to MyFrame.")
+        except Exception: # Might fail if not in an iframe, which is fine
+            pass
+
         WebDriverWait(driver, 10).until(EC.frame_to_be_available_and_switch_to_it((By.ID, "MyFrame")))
         print("Switched to iframe 'MyFrame'.")
 
@@ -124,12 +139,77 @@ def scrape_dynamic_values(driver):
 
         # Switch back to the default content after scraping
         driver.switch_to.default_content()
-        print("Switched back to default content.")
+        print("Switched back to default content from MyFrame.")
 
     except Exception as e:
         print(f"Error scraping dynamic values: {e}")
-
+        # Ensure we are back in default content in case of error during iframe operations
+        try:
+            driver.switch_to.default_content()
+            print("Switched back to default content after error in dynamic values scraping.")
+        except Exception:
+            pass
     return values
+
+def setup_driver():
+    """Initializes and returns a Chrome WebDriver instance."""
+    options = Options()
+    chrome_exe_paths_to_try = [
+        r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        r"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+        rf"C:\\Users\\{os.getlogin()}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe"
+    ]
+    found_chrome_binary = False
+    for path_option in chrome_exe_paths_to_try:
+        if os.path.exists(path_option):
+            options.binary_location = path_option
+            print(f"Using Chrome binary location: {path_option}")
+            found_chrome_binary = True
+            break
+    if not found_chrome_binary:
+        print("WARNING: Chrome binary not found at common locations. Selenium will try to locate it automatically.")
+        print(f"Looked in: {chrome_exe_paths_to_try}")
+
+    try:
+        raw_driver_path = ChromeDriverManager().install()
+        print(f"Raw ChromeDriver Path from WDM: {raw_driver_path}")
+    except Exception as e:
+        print(f"Error calling ChromeDriverManager().install(): {e}")
+        print("Please ensure webdriver-manager is installed and can access the internet.")
+        return None
+
+    normalized_driver_path = os.path.normpath(raw_driver_path)
+    
+    # Try to find chromedriver.exe
+    # Path 1: In the same directory as the file WDM pointed to (e.g., .../chromedriver-win32/chromedriver.exe)
+    potential_path1 = os.path.join(os.path.dirname(normalized_driver_path), "chromedriver.exe")
+    # Path 2: In the parent directory of where WDM pointed (e.g., .../137.0.7151.68/chromedriver.exe)
+    potential_path2 = os.path.join(os.path.dirname(os.path.dirname(normalized_driver_path)), "chromedriver.exe")
+
+    corrected_driver_path = None
+    if os.path.exists(potential_path1):
+        corrected_driver_path = potential_path1
+        print(f"Found ChromeDriver at: {corrected_driver_path}")
+    elif os.path.exists(potential_path2):
+        corrected_driver_path = potential_path2
+        print(f"Found ChromeDriver at: {corrected_driver_path}")
+    else:
+        print(f"Initial path from WDM: {normalized_driver_path}")
+        print(f"Checked for ChromeDriver at: {potential_path1}")
+        print(f"Checked for ChromeDriver at: {potential_path2}")
+        print("ERROR: ChromeDriver executable not found at expected locations within .wdm cache.")
+        print("Please check the .wdm cache structure or webdriver-manager installation.")
+        return None
+
+    print(f"Using final ChromeDriver Path: {corrected_driver_path}")
+    
+    try:
+        driver_service = Service(executable_path=corrected_driver_path)
+        driver = webdriver.Chrome(service=driver_service, options=options)
+        return driver
+    except Exception as e:
+        print(f"Error initializing webdriver.Chrome with path {corrected_driver_path}: {e}")
+        return None
 
 # --- Configuration ---
 login_url = "https://www.usms.com.bn/SmartMeter/resLogin"
@@ -139,24 +219,28 @@ username, password = load_credentials() # Loads USMS credentials from credential
 
 if not username or not password:
     print("Exiting script due to credential loading issues.")
-    exit()
-
-# Path to your WebDriver executable (e.g., "chromedriver.exe" or "msedgedriver.exe")
-# If the WebDriver is in your system PATH or same directory as the script, you can just use its name.
-# webdriver_path = "chromedriver.exe" # Example for Chrome, adjust if needed or if it's in PATH
+    exit() # Use exit() instead of quit() for script termination
 
 # --- Element Locators (using NAME attribute from previous findings) ---
 username_field_name = "ASPxRoundPanel1$txtUsername"
 password_field_name = "ASPxRoundPanel1$txtPassword"
 login_button_name = "ASPxRoundPanel1$btnLogin" # This was in the form data
 
-# Initialize the WebDriver (using Chrome in this example)
-# driver = webdriver.Chrome(executable_path=webdriver_path) # Use this if webdriver_path is set
-driver = webdriver.Chrome() 
-driver.set_window_size(1456, 1020) 
+# --- WebDriver Setup ---
+driver = setup_driver()
+if not driver:
+    print("Failed to setup WebDriver. Exiting.")
+    exit()
+
+driver.set_window_size(1456, 1020)
 
 print(f"Navigating to login page: {login_url}")
 driver.get(login_url)
+
+# Initialize scraped data variables here to ensure they exist in all paths
+dynamic_values = {}
+hourly_consumption = []
+total_kwh = None
 
 try:
     # Wait for the username field to be present and visible
@@ -207,15 +291,28 @@ try:
         time.sleep(3)
 
         try:
-            dynamic_values = scrape_dynamic_values(driver)
+            # Scrape dynamic values first as they are on the main page (inside MyFrame)
+            dynamic_values = scrape_dynamic_values(driver) # Call to scrape dynamic values
             if dynamic_values:
                 print(f"Dynamic Values: {dynamic_values}")
             else:
-                print("Failed to retrieve dynamic values.")
+                print("Failed to retrieve dynamic values or no dynamic values found.")
 
-            print("Switching to iframe (index 0)...")
-            WebDriverWait(driver, 20).until(EC.frame_to_be_available_and_switch_to_it(0))
-            print("Switched to iframe.")
+            # Proceed with navigating to the consumption data page
+            # This part assumes dynamic_values were scraped from 'MyFrame', and we are now in default content.
+            # The next operations might be within the same 'MyFrame' or another one.
+            # The original code switches to iframe by index 0 *after* this.
+            # Let's ensure we are in the correct context or switch to the main iframe for consumption details.
+
+            # Attempt to switch to the main content iframe if not already there or if operations require it.
+            # This might be redundant if scrape_dynamic_values correctly returns to default_content
+            # and the subsequent operations are within a new iframe context.
+            # The original code had: WebDriverWait(driver, 20).until(EC.frame_to_be_available_and_switch_to_it(0))
+            # This implies the consumption link is in the *first* iframe on the page.
+
+            print("Attempting to switch to the main content iframe (index 0) for consumption details...")
+            WebDriverWait(driver, 20).until(EC.frame_to_be_available_and_switch_to_it(0)) # Assumes this is the correct frame for consumption link
+            print("Switched to main content iframe (index 0).")
             time.sleep(1) # Allow frame content to load
 
             print("Waiting for consumption image link (CSS: #ASPxCardView1_DXCardLayout0_cell0_18_ASPxHyperLink4_0 > img)...")
@@ -272,32 +369,72 @@ try:
             if total_kwh:
                 print(f"\nTotal Consumption: {total_kwh} kWh")
             else:
-                print("\nCould not retrieve total consumption.")
-
-            # --- Save to Excel ---
+                print("\nCould not retrieve total consumption.")            # --- Save to Excel ---
             if hourly_consumption:
                 try:
-                    df = pd.DataFrame(hourly_consumption)
-                    # For now, we'll just save hourly data. We can add total_kwh later.
-                    excel_file_path = r"C:\Users\jayre\Desktop\MeterData.xlsx"
-                    df.to_excel(excel_file_path, index=False, sheet_name="Hourly Consumption")
-                    print(f"\nData successfully saved to {excel_file_path}")
+                    excel_path = export_usms_data(
+                        hourly_consumption=hourly_consumption,
+                        total_kwh=total_kwh,
+                        dynamic_values=dynamic_values
+                    )
+                    if excel_path:
+                        print(f"\nData successfully saved to {excel_path}")
+                    else:
+                        print("\nFailed to save data to Excel.")
                 except Exception as e:
                     print(f"\nError saving data to Excel: {e}")
             else:
                 print("\nNo hourly data to save to Excel.")
             # --- End Save to Excel ---
-
-            # Call scrape_dynamic_value after navigation and actions
-
+            
+            # --- MQTT Publishing ---
+            mqtt_payload = {}
+            if dynamic_values:
+                mqtt_payload.update(dynamic_values) # Add all dynamic values
+            
+            # For hourly data, you might want to decide how to structure it.
+            # Publishing a list of hourly readings might be too verbose for some MQTT use cases.
+            # For now, let's add it directly.
+            if hourly_consumption:
+                mqtt_payload['hourly_consumption'] = hourly_consumption
+            
+            if total_kwh is not None: # Ensure total_kwh is not None before adding
+                mqtt_payload['total_consumption_kwh'] = total_kwh
+            
+            if mqtt_payload: # Check if there's anything to publish
+                # Convert to Brunei time (UTC+8)
+                utc_now = datetime.now(timezone.utc)
+                brunei_tz = timezone(timedelta(hours=8))
+                brunei_now = utc_now.astimezone(brunei_tz)
+                mqtt_payload['mqtt_timestamp'] = brunei_now.isoformat()
+                print("\nAttempting to publish USMS data via MQTT...")
+                try:
+                    if publish_usms_json(mqtt_payload):
+                        print("✅ USMS data published successfully via MQTT.")
+                    else:
+                        print("❌ Failed to publish USMS data via MQTT. Check mqtt_publisher logs for details.")
+                except Exception as e:
+                    print(f"❌ An error occurred during MQTT publishing for USMS data: {e}")
+            else:
+                print("\nSkipping MQTT publish for USMS: No data prepared.")
+            # --- End MQTT Publishing ---
 
             # Switch back to default content if you need to interact outside the iframe later
-            # driver.switch_to.default_content()
+            driver.switch_to.default_content()
+            print("Switched back to default content after all operations in iframe.")
 
         except TimeoutException as nav_te:
             print(f"A timeout occurred during navigation or interaction after login: {nav_te}")
+            try:
+                driver.switch_to.default_content() # Ensure switch back on error
+            except Exception:
+                pass
         except Exception as nav_e:
             print(f"An error occurred after login: {nav_e}")
+            try:
+                driver.switch_to.default_content() # Ensure switch back on error
+            except Exception:
+                pass
         # ==============================================================================
 
     elif "Invalid IC Number or Password" in driver.page_source:
