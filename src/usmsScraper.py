@@ -100,56 +100,116 @@ def scrape_data_from_table(driver):
 
     return hourly_data, total_consumption
 
-def scrape_dynamic_values(driver):
+def scrape_meter_data(driver, meter_index):
     """
-    Scrapes specific labeled values (Remaining Unit, Remaining Balance, Last Updated) from the page.
+    Scrapes data from a specific meter (electricity=0, water=1).
+    Collects all available fields for both meter types.
     """
-    values = {}
+    meter_data = {}
+    meter_type = "Electricity" if meter_index == 0 else "Water"
+    
+    try:
+        # Define the selectors for this specific meter
+        base_id = f"ASPxCardView1_DXCardLayout{meter_index}"
+        
+        # Collect all fields for both meter types
+        fields = {
+            "Meter No": f"#{base_id}_2 .dxflNestedControlCell",
+            "Full Name": f"#{base_id}_4 .dxflNestedControlCell", 
+            "Meter Status": f"#{base_id}_5 .dxflNestedControlCell",
+            "Address": f"#{base_id}_6 .dxflNestedControlCell",
+            "Kampong": f"#{base_id}_7 .dxflNestedControlCell",
+            "Mukim": f"#{base_id}_8 .dxflNestedControlCell",
+            "District": f"#{base_id}_9 .dxflNestedControlCell",
+            "Postcode": f"#{base_id}_10 .dxflNestedControlCell",
+            "Remaining Unit": f"#{base_id}_11 .dxflNestedControlCell",
+            "Remaining Balance": f"#{base_id}_12 .dxflNestedControlCell",
+            "Last Updated": f"#{base_id}_17 .dxflNestedControlCell"
+        }
+
+        print(f"\nScraping {meter_type} meter data...")
+        
+        for field_name, css_selector in fields.items():
+            try:
+                element = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, css_selector))
+                )
+                meter_data[field_name] = element.text.strip()
+                print(f"  {field_name}: {element.text.strip()}")
+            except TimeoutException:
+                print(f"  Error: Timed out waiting for {field_name} to load.")
+                meter_data[field_name] = None
+            except Exception as e:
+                print(f"  Error getting {field_name}: {e}")
+                meter_data[field_name] = None
+                
+        # Add meter type for identification
+        meter_data["Meter Type"] = meter_type
+        
+    except Exception as e:
+        print(f"Error scraping {meter_type} meter data: {e}")
+        
+    return meter_data
+
+def scrape_all_meters(driver):
+    """
+    Scrapes data from all available meters on the page.
+    Returns a dictionary with electricity and water meter data.
+    """
+    all_meters = {}
+    
     try:
         # Switch to the iframe 'MyFrame' using its ID
-        # Check if already in an iframe, and if so, switch to default content first
-        # This is a guess, might need adjustment based on actual iframe structure
         try:
             driver.switch_to.default_content()
             print("Switched to default content before attempting to switch to MyFrame.")
-        except Exception: # Might fail if not in an iframe, which is fine
+        except Exception:
             pass
 
         WebDriverWait(driver, 10).until(EC.frame_to_be_available_and_switch_to_it((By.ID, "MyFrame")))
         print("Switched to iframe 'MyFrame'.")
 
-        # Define the labels and their corresponding XPath for the values
-        labels_xpaths = {
-            "Remaining Unit": "//*[@id='ASPxCardView1_DXCardLayout0_11']/table/tbody/tr/td[2]",
-            "Remaining Balance": "//*[@id='ASPxCardView1_DXCardLayout0_12']/table/tbody/tr/td[2]",
-            "Last Updated": "//*[@id='ASPxCardView1_DXCardLayout0_17']/table/tbody/tr/td[2]"
-        }
-
-        for label, xpath in labels_xpaths.items():
-            try:
-                # Wait for the element to be present
-                element = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, xpath))
-                )
-                values[label] = element.text
-                print(f"{label}: {element.text}")
-            except TimeoutException:
-                print(f"Error: Timed out waiting for {label} to load.")
-                values[label] = None
+        # Check which meters are available by looking for their card elements
+        available_meters = []
+          # Check for electricity meter (index 0)
+        try:
+            driver.find_element(By.ID, "ASPxCardView1_DXDataCard0")
+            available_meters.append((0, "Electricity"))
+            print("Electricity meter found.")
+        except Exception:
+            print("Electricity meter not found.")
+            
+        # Check for water meter (index 1) 
+        try:
+            driver.find_element(By.ID, "ASPxCardView1_DXDataCard1")
+            available_meters.append((1, "Water"))
+            print("Water meter found.")
+        except Exception:
+            print("Water meter not found.")
+              # Scrape data from each available meter
+        for meter_index, meter_name in available_meters:
+            meter_data = scrape_meter_data(driver, meter_index)
+            # Add script execution timestamp to each meter
+            if meter_data:
+                utc_now = datetime.now(timezone.utc)
+                brunei_tz = timezone(timedelta(hours=8))
+                brunei_now = utc_now.astimezone(brunei_tz)
+                meter_data['Script Execution Time'] = brunei_now.isoformat()
+            all_meters[meter_name.lower()] = meter_data
 
         # Switch back to the default content after scraping
         driver.switch_to.default_content()
         print("Switched back to default content from MyFrame.")
 
     except Exception as e:
-        print(f"Error scraping dynamic values: {e}")
-        # Ensure we are back in default content in case of error during iframe operations
+        print(f"Error scraping meter data: {e}")
         try:
             driver.switch_to.default_content()
-            print("Switched back to default content after error in dynamic values scraping.")
+            print("Switched back to default content after error in meter data scraping.")
         except Exception:
             pass
-    return values
+            
+    return all_meters
 
 def setup_driver():
     """Initializes and returns a Chrome WebDriver instance."""
@@ -219,12 +279,12 @@ username, password = load_credentials() # Loads USMS credentials from credential
 
 if not username or not password:
     print("Exiting script due to credential loading issues.")
-    exit() # Use exit() instead of quit() for script termination
+    exit()
 
 # --- Element Locators (using NAME attribute from previous findings) ---
 username_field_name = "ASPxRoundPanel1$txtUsername"
 password_field_name = "ASPxRoundPanel1$txtPassword"
-login_button_name = "ASPxRoundPanel1$btnLogin" # This was in the form data
+login_button_name = "ASPxRoundPanel1$btnLogin"
 
 # --- WebDriver Setup ---
 driver = setup_driver()
@@ -269,9 +329,6 @@ try:
         EC.element_to_be_clickable((By.ID, "ASPxRoundPanel1_btnLogin_CD"))
     )
     print("Login button is clickable. Attempting to click...")
-    # Optional: Scroll into view if needed, though WebDriverWait usually handles visibility.
-    # driver.execute_script("arguments[0].scrollIntoView({behavior: 'auto', block: 'center', inline: 'center'});", login_button)
-    # time.sleep(0.5) # Small pause before click, can be helpful
     login_button.click()
     print("Login button clicked.")
 
@@ -285,18 +342,26 @@ try:
         print("Login successful! URL has changed.")
         print(f"Now on page: {driver.current_url}")
 
-
-    
         print("Allowing MainPage to settle for 3 seconds...")
         time.sleep(3)
 
         try:
-            # Scrape dynamic values first as they are on the main page (inside MyFrame)
-            dynamic_values = scrape_dynamic_values(driver) # Call to scrape dynamic values
-            if dynamic_values:
-                print(f"Dynamic Values: {dynamic_values}")
+            # Scrape all meter data first (electricity and water meters)
+            all_meter_data = scrape_all_meters(driver)
+            if all_meter_data:
+                print(f"Meter Data: {all_meter_data}")
             else:
-                print("Failed to retrieve dynamic values or no dynamic values found.")
+                print("Failed to retrieve meter data or no meters found.")
+
+            # For backward compatibility, extract electricity meter data as dynamic_values
+            dynamic_values = {}
+            if 'electricity' in all_meter_data:
+                elec_data = all_meter_data['electricity']
+                dynamic_values = {
+                    "Remaining Unit": elec_data.get("Remaining Unit"),
+                    "Remaining Balance": elec_data.get("Remaining Balance"), 
+                    "Last Updated": elec_data.get("Last Updated")
+                }
 
             # Proceed with navigating to the consumption data page
             # This part assumes dynamic_values were scraped from 'MyFrame', and we are now in default content.
@@ -369,13 +434,14 @@ try:
             if total_kwh:
                 print(f"\nTotal Consumption: {total_kwh} kWh")
             else:
-                print("\nCould not retrieve total consumption.")            # --- Save to Excel ---
-            if hourly_consumption:
+                print("\nCould not retrieve total consumption.")
+            if hourly_consumption or all_meter_data:
                 try:
                     excel_path = export_usms_data(
                         hourly_consumption=hourly_consumption,
                         total_kwh=total_kwh,
-                        dynamic_values=dynamic_values
+                        dynamic_values=dynamic_values,
+                        all_meter_data=all_meter_data
                     )
                     if excel_path:
                         print(f"\nData successfully saved to {excel_path}")
@@ -384,13 +450,18 @@ try:
                 except Exception as e:
                     print(f"\nError saving data to Excel: {e}")
             else:
-                print("\nNo hourly data to save to Excel.")
+                print("\nNo data to save to Excel.")
             # --- End Save to Excel ---
-            
-            # --- MQTT Publishing ---
+              # --- MQTT Publishing ---
             mqtt_payload = {}
+            
+            # Add all meter data (electricity and water)
+            if all_meter_data:
+                mqtt_payload['meters'] = all_meter_data
+            
+            # Add backward compatibility for dynamic values
             if dynamic_values:
-                mqtt_payload.update(dynamic_values) # Add all dynamic values
+                mqtt_payload.update(dynamic_values)
             
             # For hourly data, you might want to decide how to structure it.
             # Publishing a list of hourly readings might be too verbose for some MQTT use cases.

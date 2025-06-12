@@ -127,7 +127,7 @@ def export_imagine_data(usage_data):
     )
 
 
-def export_usms_data(hourly_consumption, total_kwh=None, dynamic_values=None):
+def export_usms_data(hourly_consumption, total_kwh=None, dynamic_values=None, all_meter_data=None):
     """
     Export USMS meter data to Excel with proper formatting.
     
@@ -135,12 +135,13 @@ def export_usms_data(hourly_consumption, total_kwh=None, dynamic_values=None):
         hourly_consumption: List of hourly consumption data
         total_kwh: Total consumption value
         dynamic_values: Dictionary of dynamic values (Remaining Unit, Balance, etc.)
+        all_meter_data: Dictionary containing electricity and water meter data
     
     Returns:
         str: Path to the saved Excel file, or None if failed
     """
-    if not hourly_consumption:
-        print("No USMS hourly consumption data provided to export")
+    if not hourly_consumption and not all_meter_data:
+        print("No USMS data provided to export")
         return None
     
     print("Preparing to export USMS data to Excel...")
@@ -158,8 +159,18 @@ def export_usms_data(hourly_consumption, total_kwh=None, dynamic_values=None):
         
         sheets_config["Account Summary"] = {"data": summary_data}
     
+    # Add meter information sheets
+    if all_meter_data:
+        if 'electricity' in all_meter_data:
+            sheets_config["Electricity Meter"] = {"data": all_meter_data['electricity']}
+        if 'water' in all_meter_data:
+            sheets_config["Water Meter"] = {"data": all_meter_data['water']}
+    
+    # Use hourly consumption as main data if available, otherwise use meter data
+    main_data = hourly_consumption if hourly_consumption else all_meter_data
+    
     return export_to_excel(
-        data=hourly_consumption,
+        data=main_data,
         filename_prefix="MeterData",
         sheets_config=sheets_config
     )

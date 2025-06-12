@@ -271,13 +271,13 @@ def main():
                 mqtt_payload = {}
                 if "Base Plan Usage" in usage_data:
                     try:
-                        usage_string = usage_data["Base Plan Usage"] # e.g., "139GB of 700 GB Used"
+                        usage_string = usage_data["Base Plan Usage"]
                         parts = usage_string.lower().split('of')
                         used_part = parts[0].replace('gb', '').strip()
                         total_part = parts[1].split('gb')[0].strip()
                         
-                        mqtt_payload['base_plan_used_gb'] = int(used_part) # Key reverted to 'base_plan_used_gb'
-                        mqtt_payload['base_plan_total_gb'] = int(total_part) # Key reverted to 'base_plan_total_gb'
+                        mqtt_payload['base_plan_used_gb'] = int(used_part)
+                        mqtt_payload['base_plan_total_gb'] = int(total_part)
                         
                     except Exception as e:
                         print(f"Could not parse 'Base Plan Usage' string: '{usage_data['Base Plan Usage']}'. Error: {e}")
@@ -292,7 +292,7 @@ def main():
                     brunei_now = utc_now.astimezone(brunei_tz)
                     # Format time string and append fixed offset
                     mqtt_payload['mqtt_timestamp'] = brunei_now.isoformat()
-                    print(f"\\nPrepared MQTT payload: {mqtt_payload}")
+                    print(f"\nPrepared MQTT payload: {mqtt_payload}")
                     print("Attempting to publish data via MQTT...")
                     try:
                         if publish_imagine_json(mqtt_payload):
@@ -302,7 +302,7 @@ def main():
                     except Exception as e:
                         print(f"❌ An error occurred during MQTT publishing: {e}")
                 else:
-                    print("\\nSkipping MQTT publish: Could not prepare 'base_plan_used_gb' and 'base_plan_total_gb' from scraped content.")                # Save to Excel using the exporter module
+                    print("\nSkipping MQTT publish: Could not prepare 'base_plan_used_gb' and 'base_plan_total_gb' from scraped content.")                # Save to Excel using the exporter module
                 try:
                     excel_path = export_imagine_data(usage_data)
                     if excel_path:

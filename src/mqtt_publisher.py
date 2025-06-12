@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 MQTT Publisher for Home Assistant Integration
 
 This module provides a shared MQTT utility for publishing scraper data to Home Assistant.
-Designed to be used by both scraper.py (USMS) and imagineScraper.py (Imagine) scrapers.
+Designed to be used by both usmsScraper.py (USMS) and imagineScraper.py (Imagine) scrapers.
 
 SIMPLIFIED ARCHITECTURE OVERVIEW:
 ===============================
@@ -48,7 +48,7 @@ def load_mqtt_config():
         print(f"Error loading MQTT config: {e}")
         return None
 
-def publish_service_json(service_name, data_dict):
+def publish_service_json(service_path, data_dict): # Renamed service_name to service_path
     config = load_mqtt_config()
     if not config:
         print("MQTT configuration not available for publishing.")
@@ -57,7 +57,8 @@ def publish_service_json(service_name, data_dict):
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     client.username_pw_set(config['username'], config['password'])
 
-    topic = f"scraper/{service_name}"  # Changed topic structure
+    # Construct the topic using base_topic from config and the provided service_path
+    topic = f"{config['base_topic']}/{service_path}"
     
     data_dict_with_ts = data_dict.copy()
     
@@ -157,9 +158,39 @@ def publish_service_json(service_name, data_dict):
                     print(f"Error during disconnect (is_connected): {e}")
             print("MQTT client loop stopped and disconnect attempt finished.")
 
-def publish_usms_json(data_dict):
-    print("USMS publishing is currently disabled.")
-    return True # Return True to not break the calling scraper's logic if it expects a boolean
+def publish_usms_json(electricity_data, water_data):
+    print("Preparing to publish USMS data to separate topics...")
+    overall_success = True
+    current_timestamp = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).isoformat()
+
+    # Publish Electricity Data
+    if electricity_data:
+        print("Publishing USMS Electricity Data...")
+        # Ensure a consistent timestamp, preferably added by the scraper, but fallback here.
+        if 'mqtt_timestamp' not in electricity_data:
+            electricity_data['mqtt_timestamp'] = current_timestamp
+        
+        if not publish_service_json("usms/electric", electricity_data): # Changed topic here
+            print("❌ Failed to publish USMS Electricity data.")
+            overall_success = False
+        # No explicit success print here, publish_service_json handles it
+    else:
+        print("No electricity data to publish for USMS.")
+
+    # Publish Water Data
+    if water_data:
+        print("Publishing USMS Water Data...")
+        if 'mqtt_timestamp' not in water_data:
+            water_data['mqtt_timestamp'] = current_timestamp
+
+        if not publish_service_json("usms/water", water_data):
+            print("❌ Failed to publish USMS Water data.")
+            overall_success = False
+        # No explicit success print here, publish_service_json handles it
+    else:
+        print("No water data to publish for USMS.")
+
+    return overall_success
 
 def publish_imagine_json(data_dict):
     print("Preparing to publish Imagine data (pre-formatted by scraper)...")
